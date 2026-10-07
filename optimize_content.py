@@ -6,6 +6,7 @@
 # License: Public Domain / Unlicense
 # https://github.com/yurablok/optimize_content
 # History:
+# v0.4    2026-10-07    Added collage mode.
 # v0.3    2026-07-26    Added codec-based filtering (-h264, -hevc, etc.) and include filters (+mp4, +h264).
 #                       Added recursive directory traversal, verbose mode (-v), copy excluded (+ex).
 #                       Added skip-if-already-converted logic, colored progress with file counters.
@@ -22,7 +23,7 @@ import shutil
 import threading
 import tkinter as tk
 from PIL import Image, ImageTk, ImageOps
-from math import gcd
+from math import gcd, sqrt, ceil
 
 G, Y, C, R, W, D, E = "\033[32m", "\033[33m", "\033[36m", "\033[31m", "\033[97m", "\033[90m", "\033[0m"
 
@@ -41,7 +42,7 @@ BLUE_ACT = "#388bfd"
 GREEN = "#238636"
 GREEN_ACT = "#2ea043"
 
-video_formats = { "mp4", "m4v", "mov", "mkv", "mpeg", "wmv", "webm" }
+video_formats = { "mp4", "m4v", "mov", "mkv", "mpeg", "wmv", "webm", "ts" }
 video_codecs = { "h264", "hevc", "vp8", "vp9", "av1", "mpeg2video", "mpeg4", "vc1", "wmv3", "theora", "mjpeg", "prores", "dnxhd", "cineform", "dvvideo" }
 animated_formats = { "gif" }
 image_formats = { "jpg", "jpeg", "png", "bmp", "avif", "webp" }
@@ -59,11 +60,49 @@ argOutputStr: str = ""
 argResize: bool = False
 argResizeVideo: bool = False
 arg60Fps: bool = False
-argListOnly: bool = True
+argListOnly: bool = False
 argModification: bool = False
 argVerbose: bool = False
 argCopyExcluded: bool = False
 argTestM: bool = False
+argCollage: bool = False
+argHelp = len(sys.argv) < 2
+
+HELP_TEXT = f"""{G}Batch video and image format converter. {C}v0.4{E}
+{W}Converts to webm and webp with optional resizing, 60 FPS interpolation,
+codec/format filtering, and interactive preview before conversion.{E}
+- `{Y}-h{E}`: Print the help message.
+- `{Y}-i{E} {C}<path>{E}`: Specify input file(s) or directory(ies). Can be repeated.
+        Directories are traversed recursively for supported files.
+        If omitted, processes all supported files recursively in the
+        current directory.
+- `{Y}-o{E} {C}<path>{E}`: Specify output directory. If omitted, uses {D}converted/{E}.
+- `{Y}-l{E}`: Only list matched found files.
+- `{Y}-v{E}`: Verbose mode. Show ffmpeg output during conversion.
+- `{Y}-m{E}`: Modification mode. Show each file before processing. Press Escape
+        or close the window to proceed to the next file.
+- `{Y}-r{E}`: Enable resizing (videos and images). Uses predefined maximum
+        dimensions depending on orientation:
+  - Horizontal video: {C}1280 x 720{E}
+  - Vertical video: {C}___ x 1280{E}
+  - Horizontal image: {C}2560 x 1440{E}
+  - Vertical image: {C}1920 x ___{E}
+- `{Y}-rv{E}`: Enable resizing for videos only (same dimensions as {Y}-r{E}).
+- `{Y}-60{E}`: Enable 60 FPS conversion for videos and animated images using
+        motion interpolation.
+- `{Y}-co{E}`: Collage mode. Layout all input images in a 2D grid and tile them
+        evenly across horizontal and vertical space (no resizing of sources),
+        then save as webp. Falls back to proportional scaling when canvas
+        exceeds 16383px in either dimension.
+- `{Y}-m4v{E}`, `{Y}-mkv{E}`, `{Y}-mov{E}`, `{Y}-mp4{E}`, `{Y}-mpeg{E}`, `{Y}-webm{E}`, `{Y}-wmv{E}`: Exclude unwanted video format.
+- `{Y}-h264{E}`, `{Y}-hevc{E}`, `{Y}-vp8{E}`, `{Y}-vp9{E}`, `{Y}-av1{E}`, `{Y}-mpeg2video{E}`, `{Y}-mpeg4{E}`,
+  `{Y}-vc1{E}`, `{Y}-wmv3{E}`, `{Y}-theora{E}`, `{Y}-mjpeg{E}`, `{Y}-prores{E}`, `{Y}-dnxhd{E}`,
+  `{Y}-cineform{E}`, `{Y}-dvvideo{E}`: Exclude videos by codec.
+- `{Y}-gif{E}`: Exclude unwanted animated format.
+- `{Y}-avif{E}`, `{Y}-bmp{E}`, `{Y}-jpeg{E}`, `{Y}-jpg{E}`, `{Y}-png{E}`, `{Y}-webp{E}`: Exclude unwanted image format.
+- `{Y}+gif{E}`, `{Y}+mp4{E}`, etc.: Include ONLY files with this format (excludes all others).
+- `{Y}+h264{E}`, `{Y}+hevc{E}`, etc.: Include ONLY videos with this codec.
+- `{Y}+ex{E}`: Copy excluded (by format or codec) files to output instead of skipping."""
 
 for arg in sys.argv[1:]:
     if argInput:
@@ -90,7 +129,7 @@ for arg in sys.argv[1:]:
     elif arg == "-60":
         arg60Fps = True
     elif arg == "-l":
-        argListOnly = False
+        argListOnly = True
     elif arg == "-m":
         argModification = True
     elif arg == "-v":
@@ -119,42 +158,16 @@ for arg in sys.argv[1:]:
             exit(1)
     elif arg == "--test-m":
         argTestM = True
+    elif arg == "-co":
+        argCollage = True
     elif arg == "-h":
-        print(f"""{G}Batch video and image format converter. {C}v0.3{E}
-{W}Converts to webm and webp with optional resizing, 60 FPS interpolation,
-codec/format filtering, and interactive preview before conversion.{E}
-- `{Y}-h{E}`: Print the help message.
-- `{Y}-i{E} {C}<path>{E}`: Specify input file(s) or directory(ies). Can be repeated.
-        Directories are traversed recursively for supported files.
-        If omitted, processes all supported files recursively in the
-        current directory.
-- `{Y}-o{E} {C}<path>{E}`: Specify output directory. If omitted, uses {D}converted/{E}.
-- `{Y}-l{E}`: Only list matched found files.
-- `{Y}-v{E}`: Verbose mode. Show ffmpeg output during conversion.
-- `{Y}-m{E}`: Modification mode. Show each file before processing. Press Escape
-        or close the window to proceed to the next file.
-- `{Y}-r{E}`: Enable resizing (videos and images). Uses predefined maximum
-        dimensions depending on orientation:
-  - Horizontal video: {C}1280 x 720{E}
-  - Vertical video: {C}___ x 1280{E}
-  - Horizontal image: {C}2560 x 1440{E}
-  - Vertical image: {C}1920 x ___{E}
-- `{Y}-rv{E}`: Enable resizing for videos only (same dimensions as {Y}-r{E}).
-- `{Y}-60{E}`: Enable 60 FPS conversion for videos and animated images using
-        motion interpolation.
-- `{Y}-m4v{E}`, `{Y}-mkv{E}`, `{Y}-mov{E}`, `{Y}-mp4{E}`, `{Y}-mpeg{E}`, `{Y}-webm{E}`, `{Y}-wmv{E}`: Exclude unwanted video format.
-- `{Y}-h264{E}`, `{Y}-hevc{E}`, `{Y}-vp8{E}`, `{Y}-vp9{E}`, `{Y}-av1{E}`, `{Y}-mpeg2video{E}`, `{Y}-mpeg4{E}`,
-  `{Y}-vc1{E}`, `{Y}-wmv3{E}`, `{Y}-theora{E}`, `{Y}-mjpeg{E}`, `{Y}-prores{E}`, `{Y}-dnxhd{E}`,
-  `{Y}-cineform{E}`, `{Y}-dvvideo{E}`: Exclude videos by codec.
-- `{Y}-gif{E}`: Exclude unwanted animated format.
-- `{Y}-avif{E}`, `{Y}-bmp{E}`, `{Y}-jpeg{E}`, `{Y}-jpg{E}`, `{Y}-png{E}`, `{Y}-webp{E}`: Exclude unwanted image format.
-- `{Y}+gif{E}`, `{Y}+mp4{E}`, etc.: Include ONLY files with this format (excludes all others).
-- `{Y}+h264{E}`, `{Y}+hevc{E}`, etc.: Include ONLY videos with this codec.
-- `{Y}+ex{E}`: Copy excluded (by format or codec) files to output instead of skipping.""")
-        exit(0)
+        argHelp = True
     else:
         print(f"{R}Unknown argument: {arg}{E}")
         exit(1)
+if argHelp:
+    print(HELP_TEXT)
+    exit(0)
 if argOutput is True:
     print(f"{R}Argument -o requires a path{E}")
     exit(1)
@@ -989,6 +1002,120 @@ if argTestM:
     else:
         print(f"{R}Some tests failed.{E}")
     exit(0 if result.wasSuccessful() else 1)
+
+if argCollage:
+    img_files = []
+    for f in files:
+        ext = os.path.splitext(f)[1][1:].lower()
+        if ext in image_formats:
+            img_files.append(f)
+    # Remove any existing collage.webp to avoid recursive references
+    img_files = [f for f in img_files if not str(os.path.basename(f)).startswith("collage")]
+    if img_files:
+        images = []
+        for f in img_files:
+            with Image.open(f) as im:
+                im = ImageOps.exif_transpose(im).copy()
+                if im.mode != "RGB":
+                    im = im.convert("RGB")
+                images.append(im)
+            print(f"{Y}Loaded {f}: {im.width}x{im.height}{E}")
+        n = len(images)
+        print(f"{Y}Total images: {n}{E}")
+        # Randomized square packing — infinite search, Ctrl+C saves best.
+        print(f"{Y}Using randomized layout (Ctrl+C to stop, saves best so far){E}")
+        indexed = list(enumerate(images))
+        indexed.sort(key=lambda ix: ix[1].width * ix[1].height, reverse=True)
+        imgs = [im for _, im in indexed]
+
+        total_area = sum(im.width * im.height for im in imgs)
+        canvas_area = int(total_area * 1.21)
+        side = int(ceil(sqrt(canvas_area)))
+        canvas_w = side
+        canvas_h = side
+        print(f"{Y}Canvas: {canvas_w}x{canvas_h}, total_area={total_area}, canvas_area={canvas_area}{E}")
+
+        random.seed()
+        best_n = 0
+        best_layout = []
+        best_fill = 0
+        attempt = 0
+
+        try:
+            while True:
+                layout = []
+                occupied = []
+                placed = 0
+                for im in imgs:
+                    w, h = im.width, im.height
+                    pos = None
+                    for trial in range(1000):
+                        px = random.randint(0, max(0, canvas_w - w))
+                        py = random.randint(0, max(0, canvas_h - h))
+                        ok = True
+                        for ox, oy, ow, oh in occupied:
+                            if not (px + w <= ox or px >= ox + ow or py + h <= oy or py >= oy + oh):
+                                ok = False
+                                break
+                        if ok:
+                            pos = (px, py)
+                            break
+                    if pos:
+                        layout.append((im, pos[0], pos[1]))
+                        occupied.append((pos[0], pos[1], w, h))
+                        placed += 1
+                    else:
+                        break
+
+                attempt += 1
+                occ = sum(w * h for _, _, w, h in occupied)
+                if occupied:
+                    bx, by = min(p[0] for p in occupied), min(p[1] for p in occupied)
+                    bxe, bye = max(p[0]+p[2] for p in occupied), max(p[1]+p[3] for p in occupied)
+                    bfill = int(occ * 100 // max(1, (bxe-bx)*(bye-by)))
+                else:
+                    bfill = 0
+
+                if placed > best_n or (placed == best_n and bfill > best_fill):
+                    best_n = placed
+                    best_fill = bfill
+                    best_layout = layout[:]
+                    print(f"{Y}Attempt {attempt}: {placed}/{n}, fill={bfill}%{E}")
+                    if placed == n:
+                        print(f"{G}ALL {n} images placed — stopping{E}")
+                        break
+
+                if attempt % 100 == 0:
+                    print(f"{Y}[{attempt}] Best: {best_n}/{n}, fill={best_fill}%{E}")
+
+        except (KeyboardInterrupt, EOFError):
+            if best_n > 0:
+                print(f"{G}\nStopped after {attempt} attempts. Best: {best_n}/{n} placed, fill={best_fill}%{E}")
+            else:
+                print(f"{R}\nNo placement succeeded after {attempt} attempts.{E}")
+
+        # Build collage
+        collage = Image.new("RGB", (canvas_w, canvas_h), (0, 0, 0))
+        for im, cx, cy in best_layout:
+            collage.paste(im, (cx, cy))
+        if collage.width > 16383 or collage.height > 16383:
+            ratio = min(16383 / collage.width, 16383 / collage.height)
+            new_w = max(int(collage.width * ratio), 1)
+            new_h = max(int(collage.height * ratio), 1)
+            print(f"{Y}Collage rescaled: {collage.width}x{collage.height} -> {new_w}x{new_h}{E}")
+            collage = collage.resize((new_w, new_h), Image.Resampling.BICUBIC)
+        output_file = output_dir + "collage.webp"
+        if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+            print(f"{Y}Skipped collage (already exists: {output_file}){E}")
+        else:
+            if os.path.dirname(output_file):
+                os.makedirs(os.path.dirname(output_file), exist_ok=True)
+            collage.save(output_file, format="WEBP", quality=88, method=6)
+            collage.close()
+            print(f"{Y}Created collage: {output_file}{E}")
+    else:
+        print(f"{Y}No image files for collage{E}")
+    exit(0)
 
 ffmpeg2pass = "ffmpeg2pass-" + str(random.randint(100000000, 999999999))
 total = len(files)

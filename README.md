@@ -25,6 +25,7 @@ Optimize size of videos and images by converting to `webm` and `webp`, with opti
   - Vertical image: `1920 x ___`
 - `-rv`: Enable resizing for videos only (same dimensions as `-r`).
 - `-60`: Enable 60 FPS conversion for videos and animated images using motion interpolation.
+- `-co`: Collage mode. Layout all input images in a 2D grid and tile them evenly across horizontal and vertical space (no resizing of sources), then save as webp. Falls back to proportional scaling when canvas exceeds 16383px in either dimension.
 - `-m4v`, `-mkv`, `-mov`, `-mp4`, `-mpeg`, `-webm`, `-wmv`: Exclude unwanted video formats.
 - `-h264`, `-hevc`, `-vp8`, `-vp9`, `-av1`, `-mpeg2video`, `-mpeg4`, `-vc1`, `-wmv3`, `-theora`, `-mjpeg`, `-prores`, `-dnxhd`, `-cineform`, `-dvvideo`: Exclude videos by codec.
 - `-gif`: Exclude animated GIF format.
