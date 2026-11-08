@@ -7,6 +7,7 @@
 # License: Public Domain / Unlicense
 # https://github.com/yurablok/optimize_content
 # History:
+# v0.2    2026-11-08    Write sorting_choices.txt in append-only mode.
 # v0.1    2026-07-26    First release. Interactive side-by-side image/animation comparator.
 #                       Binary insertion sort, choices cache for resume, symlink output,
 #                       grid view, animation playback, recursive directory traversal.
@@ -235,14 +236,6 @@ def _save_result(sorted_items):
     except Exception:
         pass
 
-def _save_choices(cache):
-    try:
-        with open(strChoices, "w", encoding="utf-8") as f:
-            for (ka, kb), v in cache.items():
-                f.write(f"{v} | {_to_relative(ka)} | {_to_relative(kb)}\n")
-    except Exception:
-        pass
-
 def _create_symlinks(sorted_items):
     if not strSymlink:
         return
@@ -413,7 +406,6 @@ class Comparer:
 
     def __init__(self):
         self.cache = _load_choices()
-        _save_choices(self.cache)
         self.sorted_list = []
         self.pending = list(files)
 
